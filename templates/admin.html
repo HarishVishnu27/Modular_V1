@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Traffic Monitoring</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/konva@8.3.3/konva.min.js"></script>
+    <style>
+        /* Fix for potential canvas position issues */
+        #canvas-container {
+            position: relative;
+            overflow: hidden;
+            max-width: 100%;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+        #drawing-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #camera-frame {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+        /* Reference frame container with same dimensions */
+        #reference-container {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+        #reference-frame {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Maintains aspect ratio */
+        }
+        .konvajs-content {
+            position: absolute !important;
+        }
+        /* Debug styles for canvas boundary */
+        .canvas-debug {
+            border: 2px dashed red;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <header class="bg-gray-800 text-white p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold">Admin Panel</h1>
+                <nav class="mt-2 flex space-x-4">
+                    <a href="{{ url_for('index') }}" class="text-white hover:text-gray-300">Home</a>
+                    <a href="{{ url_for('analytics') }}" class="text-white hover:text-gray-300">Analytics</a>
+                    <a href="{{ url_for('admin_panel') }}" class="text-white hover:text-gray-300">Admin Panel</a>
+                </nav>
+            </div>
+            <a href="{{ url_for('logout') }}"
+               class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+                Logout
+            </a>
+        </div>
+    </header>
+
+    <main class="container mx-auto py-6">
+        <!-- System Parameters Section -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <h2 class="text-xl font-bold mb-4">System Parameters</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="frame-skip" class="block mb-2 text-sm font-medium">Frame Skip Count</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="number" id="frame-skip" min="1" value="1"
+                               class="p-2 border rounded w-32">
+                        <button onclick="updateFrameSkip()"
+                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                            Update
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label for="vehicle-threshold" class="block mb-2 text-sm font-medium">Vehicle Threshold (X) for VDC=1</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="number" id="vehicle-threshold" min="1" value="5"
+                               class="p-2 border rounded w-32">
+                        <button onclick="updateVehicleThreshold()"
+                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                            Update
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Controls -->
+        <div class="flex flex-col items-center mb-6">
+            <div class="mb-4">
+                <label for="camera-select" class="block mb-2 text-lg font-medium text-center">Select Camera</label>
+                <select id="camera-select" class="p-2 border rounded">
+                    <option value="cam1">Camera 1</option>
+                    <option value="cam2">Camera 2</option>
+                    <option value="cam3">Camera 3</option>
+                    <option value="cam4">Camera 4</option>
+                </select>
+            </div>
+
+            <div class="mb-4">
+                <label for="region-type" class="block mb-2 text-lg font-medium text-center">Select Region Type</label>
+                <select id="region-type" class="p-2 border rounded">
+                    <option value="R">Traffic Region (R1)</option>
+                    <option value="Zebra">Zebra Crossing</option>
+                </select>
+            </div>
+
+            <!-- Debug info -->
+            <div class="mb-4 text-xs text-gray-500">
+                <span id="debug-info">Canvas dimensions: waiting for initialization...</span>
+            </div>
+
+            <div class="flex space-x-4 mb-4">
+                <button id="refresh-frame" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Refresh Frame</button>
+                <button id="debug-toggle" class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Toggle Debug</button>
+                <button id="load-regions" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Load Regions</button>
+            </div>
+        </div>
+
+        <div class="flex flex-col md:flex-row justify-center md:space-x-8 space-y-4 md:space-y-0">
+            <!-- Live Camera Feed with Drawing -->
+            <div class="flex flex-col items-center">
+                <h2 class="text-xl font-bold mb-4">Live Camera Feed (Drawing Area)</h2>
+                <div id="canvas-container" class="relative inline-block shadow-md">
+                    <img id="camera-frame" alt="Camera feed not available" />
+                    <div id="drawing-layer"></div>
+                </div>
+                <div id="status-message" class="mt-2 text-sm text-gray-600"></div>
+            </div>
+
+            <!-- Last Processed Image -->
+            <div class="flex flex-col items-center">
+                <h2 class="text-xl font-bold mb-4">Last Processed Image (Reference)</h2>
+                <div id="reference-container" class="shadow-md">
+                    <img id="reference-frame" alt="No processed image available" />
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-center flex-wrap space-x-2 mt-6">
+            <button id="save-regions" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">Save Regions</button>
+            <button id="clear-regions" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">Clear Drawing</button>
+        </div>
+    </main>
+
+    <footer class="bg-gray-800 text-white p-4 text-center mt-6">
+        <p>© 2024 Traffic Monitoring System</p>
+    </footer>
+
+    <script>
+        // Core elements
+        const frameElement = document.getElementById('camera-frame');
+        const referenceFrame = document.getElementById('reference-frame');
+        const referenceContainer = document.getElementById('reference-container');
+        const drawingLayer = document.getElementById('drawing-layer');
+        const statusMessage = document.getElementById('status-message');
+        const canvasContainer = document.getElementById('canvas-container');
+        const debugInfo = document.getElementById('debug-info');
+
+        // State variables
+        let regions = {};
+        let currentCamera = 'cam1';
+        let points = [];
+        let currentRegionType = 'R';
+        let isCanvasReady = false;
+        let isDrawingEnabled = false;
+        let isDebugMode = false;
+
+        // Create the Konva stage with reasonable default size
+        const stage = new Konva.Stage({
+            container: 'drawing-layer',
+            width: 640,
+            height: 480
+        });
+
+        const layer = new Konva.Layer();
+        stage.add(layer);
+
+        // Function to set status message
+        function setStatus(message, isError = false) {
+            statusMessage.textContent = message;
+            statusMessage.className = isError
+                ? 'mt-2 text-sm text-red-600 font-medium'
+                : 'mt-2 text-sm text-gray-600';
+
+            if (isDebugMode) {
+                console.log(`Status: ${message} ${isError ? '[ERROR]' : ''}`);
+            }
+        }
+
+        // Function to update debug info
+        function updateDebugInfo() {
+            if (!isDebugMode) return;
+
+            const info = [
+                `Frame: ${frameElement.naturalWidth || 0}x${frameElement.naturalHeight || 0}`,
+                `Canvas: ${stage.width()}x${stage.height()}`,
+                `Points: ${points.length}`,
+                `Mode: ${currentRegionType}`
+            ].join(' | ');
+
+            debugInfo.textContent = info;
+        }
+
+        // Toggle debug mode
+        document.getElementById('debug-toggle').addEventListener('click', () => {
+            isDebugMode = !isDebugMode;
+
+            if (isDebugMode) {
+                canvasContainer.classList.add('canvas-debug');
+                drawingLayer.classList.add('canvas-debug');
+                updateDebugInfo();
+                console.log("Debug mode enabled");
+                console.log("Current state:", {
+                    points,
+                    currentCamera,
+                    isCanvasReady,
+                    isDrawingEnabled,
+                    stageWidth: stage.width(),
+                    stageHeight: stage.height(),
+                    frameWidth: frameElement.naturalWidth,
+                    frameHeight: frameElement.naturalHeight
+                });
+            } else {
+                canvasContainer.classList.remove('canvas-debug');
+                drawingLayer.classList.remove('canvas-debug');
+                debugInfo.textContent = "Debug mode disabled";
+            }
+        });
+
+        // Refresh frame button
+        document.getElementById('refresh-frame').addEventListener('click', async () => {
+            await loadCameraFrame(currentCamera);
+        });
+
+        // Initialize Konva stage with proper dimensions
+        function initializeKonvaStage() {
+            if (!frameElement.complete || !frameElement.naturalWidth) {
+                console.error("Frame element has no dimensions");
+                setStatus("Error: Cannot initialize drawing canvas (no frame dimensions)", true);
+                return false;
+            }
+
+            const width = frameElement.naturalWidth;
+            const height = frameElement.naturalHeight;
+
+            if (width === 0 || height === 0) {
+                console.error("Invalid frame dimensions:", width, height);
+                setStatus("Error: Invalid frame dimensions", true);
+                return false;
+            }
+
+            // These styles ensures the Konva layer is properly positioned
+            drawingLayer.style.width = `${width}px`;
+            drawingLayer.style.height = `${height}px`;
+
+            // Update the Konva stage dimensions
+            stage.width(width);
+            stage.height(height);
+
+            // Make sure the container is sized correctly
+            canvasContainer.style.width = `${width}px`;
+            canvasContainer.style.height = `${height}px`;
+
+            // Make reference container match the same dimensions
+            referenceContainer.style.width = `${width}px`;
+            referenceContainer.style.height = `${height}px`;
+
+            layer.draw();
+
+            isCanvasReady = true;
+            isDrawingEnabled = true;
+            setStatus("Canvas ready. Click to draw points.");
+            updateDebugInfo();
+            return true;
+        }
+
+        // System parameter functions
+        async function updateFrameSkip() {
+            const frameSkip = document.getElementById('frame-skip').value;
+            try {
+                setStatus("Updating frame skip...");
+                const response = await fetch('/update_frame_skip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ frame_skip: parseInt(frameSkip) }),
+                });
+                const data = await response.json();
+                setStatus(data.message || 'Frame skip count updated successfully');
+            } catch (error) {
+                console.error('Error updating frame skip:', error);
+                setStatus('Failed to update frame skip count', true);
+            }
+        }
+
+        async function updateVehicleThreshold() {
+            const threshold = document.getElementById('vehicle-threshold').value;
+            try {
+                setStatus("Updating vehicle threshold...");
+                const response = await fetch('/update_vehicle_threshold', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ threshold: parseInt(threshold) }),
+                });
+                const data = await response.json();
+                setStatus(data.message || 'Vehicle threshold updated successfully');
+            } catch (error) {
+                console.error('Error updating vehicle threshold:', error);
+                setStatus('Failed to update vehicle threshold', true);
+            }
+        }
+
+        // Fetch system parameters on load
+        async function fetchParameters() {
+            try {
+                const response = await fetch('/get_parameters');
+                const data = await response.json();
+
+                document.getElementById('frame-skip').value = data.frame_skip || 1;
+                document.getElementById('vehicle-threshold').value = data.vehicle_threshold || 5;
+            } catch (error) {
+                console.error('Error fetching parameters:', error);
+                setStatus('Failed to load system parameters', true);
+            }
+        }
+
+        // Load camera frame
+        async function loadCameraFrame(camId) {
+            try {
+                setStatus(`Loading camera ${camId} frame...`);
+                points = [];
+                isCanvasReady = false;
+                isDrawingEnabled = false;
+
+                // Clear any existing frame and canvas
+                frameElement.src = '';
+                layer.destroyChildren();
+                layer.draw();
+
+                const response = await fetch(`/get_frame/${camId}?_=${Date.now()}`); // Prevent caching
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const frameUrl = data.frame_url + '?_=' + Date.now();
+
+                    return new Promise((resolve, reject) => {
+                        // Set up onload before setting src to ensure it catches
+                        frameElement.onload = () => {
+                            if (initializeKonvaStage()) {
+                                setStatus(`Camera ${camId} frame loaded successfully`);
+                                resolve(true);
+                            } else {
+                                setStatus(`Error initializing canvas for ${camId}`, true);
+                                reject(new Error("Canvas initialization failed"));
+                            }
+                        };
+
+                        frameElement.onerror = () => {
+                            setStatus(`Failed to load camera ${camId} frame`, true);
+                            isCanvasReady = false;
+                            isDrawingEnabled = false;
+                            reject(new Error("Frame loading failed"));
+                        };
+
+                        // Set the source to load the image
+                        frameElement.src = frameUrl;
+                    });
+                } else {
+                    setStatus(data.message || `Failed to load camera ${camId} frame`, true);
+                    throw new Error(`API returned error: ${data.message}`);
+                }
+            } catch (error) {
+                console.error(`Error loading camera ${camId}:`, error);
+                setStatus(`Error: Failed to load camera ${camId}`, true);
+                isCanvasReady = false;
+                isDrawingEnabled = false;
+                return false;
+            }
+        }
+
+        // Function to load the last processed image
+        async function loadLastProcessedImage(camId) {
+            try {
+                setStatus(`Loading processed image for ${camId}...`);
+                const response = await fetch(`/get_last_processed/${camId}?_=${Date.now()}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    referenceFrame.src = data.image_url + '?_=' + Date.now(); // Add timestamp to prevent caching
+
+                    referenceFrame.onload = () => {
+                        setStatus(`Reference image loaded for ${camId}`);
+                    };
+
+                    referenceFrame.onerror = () => {
+                        setStatus(`Error loading reference image for ${camId}`, true);
+                    };
+                } else {
+                    console.error('Failed to load last processed image:', data.message);
+                    referenceFrame.src = ''; // Clear the image if failed
+                    setStatus(`No processed image available for ${camId}`, true);
+                }
+            } catch (error) {
+                console.error('Error loading last processed image:', error);
+                setStatus('Error loading reference image', true);
+            }
+        }
+
+        // Load existing regions from backend
+        async function loadExistingRegions() {
+            try {
+                setStatus("Loading existing regions...");
+                const response = await fetch('/get_regions');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                regions = data || {};
+
+                if (!isCanvasReady) {
+                    setStatus("Cannot display regions: Canvas not ready", true);
+                    return;
+                }
+
+                displayExistingRegions();
+                setStatus("Existing regions loaded");
+            } catch (error) {
+                console.error('Error loading existing regions:', error);
+                setStatus('Failed to load existing regions', true);
+            }
+        }
+
+        // Display existing regions on the canvas
+        function displayExistingRegions() {
+            if (!isCanvasReady) return;
+
+            layer.destroyChildren();
+            points = [];
+
+            if (regions && regions[currentCamera]) {
+                const cameraRegions = regions[currentCamera];
+
+                // Draw R1 region if it exists
+                if (cameraRegions.R1) {
+                    const vertices = cameraRegions.R1.vertices;
+                    const flatVertices = vertices.flat();
+
+                    if (isDebugMode) {
+                        console.log("R1 region vertices:", vertices);
+                        console.log("R1 region flat vertices:", flatVertices);
+                    }
+
+                    const polygon = new Konva.Line({
+                        points: flatVertices,
+                        stroke: 'rgba(0, 255, 0, 0.7)',
+                        strokeWidth: 2,
+                        closed: true,
+                        fill: 'rgba(0, 255, 0, 0.2)'
+                    });
+                    layer.add(polygon);
+
+                    // Add points
+                    vertices.forEach(point => {
+                        const circle = new Konva.Circle({
+                            x: point[0],
+                            y: point[1],
+                            radius: 5,
+                            fill: 'red',
+                        });
+                        layer.add(circle);
+                    });
+                }
+
+                // Draw Zebra crossing if it exists
+                if (cameraRegions.Zebra) {
+                    const vertices = cameraRegions.Zebra.vertices;
+                    const flatVertices = vertices.flat();
+
+                    if (isDebugMode) {
+                        console.log("Zebra region vertices:", vertices);
+                        console.log("Zebra region flat vertices:", flatVertices);
+                    }
+
+                    const line = new Konva.Line({
+                        points: flatVertices,
+                        stroke: 'rgba(0, 0, 255, 0.7)',
+                        strokeWidth: 3
+                    });
+                    layer.add(line);
+
+                    // Add points
+                    vertices.forEach(point => {
+                        const circle = new Konva.Circle({
+                            x: point[0],
+                            y: point[1],
+                            radius: 5,
+                            fill: 'blue',
+                        });
+                        layer.add(circle);
+                    });
+                }
+            }
+
+            layer.draw();
+            updateDebugInfo();
+        }
+
+        // Update region type when selection changes
+        document.getElementById('region-type').addEventListener('change', (e) => {
+            currentRegionType = e.target.value;
+            points = [];
+            layer.destroyChildren();
+            layer.draw();
+            setStatus(`Selected ${currentRegionType === 'R' ? 'Traffic Region' : 'Zebra Crossing'} drawing mode`);
+            updateDebugInfo();
+        });
+
+        // Load camera when selection changes
+        document.getElementById('camera-select').addEventListener('change', async (e) => {
+            currentCamera = e.target.value;
+
+            try {
+                // Load camera frame
+                await loadCameraFrame(currentCamera);
+
+                // Load existing regions
+                await loadExistingRegions();
+
+                // Load reference frame in parallel
+                await loadLastProcessedImage(currentCamera);
+
+                updateDebugInfo();
+            } catch (error) {
+                console.error("Error loading camera data:", error);
+                setStatus("Failed to fully initialize camera view", true);
+            }
+        });
+
+        // Handle drawing clicks
+        stage.on('click', (e) => {
+            if (!isCanvasReady || !isDrawingEnabled) {
+                setStatus("Cannot draw: Canvas not ready or drawing disabled", true);
+                return;
+            }
+
+            const pos = stage.getPointerPosition();
+            if (!pos) {
+                console.error("Could not get pointer position");
+                return;
+            }
+
+            // Round coordinates for precision
+            const x = Math.round(pos.x);
+            const y = Math.round(pos.y);
+
+            if (isDebugMode) {
+                console.log(`Click at position: ${x}, ${y}`);
+            }
+
+            if (currentRegionType === 'Zebra') {
+                if (points.length < 2) {
+                    points.push([x, y]);
+                    setStatus(`Added point ${points.length}/2 for Zebra crossing`);
+
+                    // Clear previous points if adding first point
+                    if (points.length === 1) {
+                        layer.destroyChildren();
+                    }
+
+                    const point = new Konva.Circle({
+                        x: x,
+                        y: y,
+                        radius: 5,
+                        fill: 'blue',
+                    });
+                    layer.add(point);
+
+                    if (points.length === 2) {
+                        const line = new Konva.Line({
+                            points: points.flat(),
+                            stroke: 'blue',
+                            strokeWidth: 2,
+                        });
+                        layer.add(line);
+                        setStatus("Zebra crossing complete. Click 'Save' to confirm or 'Clear' to redraw.");
+                    }
+                }
+            } else {
+                // For polygon regions
+                points.push([x, y]);
+                setStatus(`Added point ${points.length} for Traffic Region`);
+
+                // Clear existing drawings if first point
+                if (points.length === 1) {
+                    layer.destroyChildren();
+                }
+
+                const point = new Konva.Circle({
+                    x: x,
+                    y: y,
+                    radius: 5,
+                    fill: 'red',
+                });
+                layer.add(point);
+
+                if (points.length >= 2) {
+                    // Remove old polygon lines
+                    layer.find('Line').filter(node => !node.hasName('point-marker')).forEach(line => line.destroy());
+
+                    // Draw new polygon
+                    const polygon = new Konva.Line({
+                        points: points.flat(),
+                        stroke: 'red',
+                        strokeWidth: 2,
+                        closed: points.length >= 3,
+                        fill: points.length >= 3 ? 'rgba(255, 0, 0, 0.2)' : undefined
+                    });
+                    layer.add(polygon);
+
+                    if (points.length >= 3) {
+                        setStatus(`Traffic Region polygon with ${points.length} points. Click 'Save' to confirm or add more points.`);
+                    }
+                }
+            }
+
+            layer.draw();
+            updateDebugInfo();
+        });
+
+        // Save regions button
+        document.getElementById('save-regions').addEventListener('click', async () => {
+            if (!isCanvasReady) {
+                setStatus("Cannot save: Canvas not ready", true);
+                return;
+            }
+
+            if ((currentRegionType === 'Zebra' && points.length === 2) ||
+                (currentRegionType === 'R' && points.length >= 3)) {
+
+                setStatus("Saving region...");
+                isDrawingEnabled = false;
+
+                const region = {
+                    vertices: points,
+                    type: currentRegionType,
+                    color: currentRegionType === 'Zebra' ? 'blue' : 'green',
+                };
+
+                if (isDebugMode) {
+                    console.log("Saving region:", region);
+                }
+
+                try {
+                    const response = await fetch('/update_regions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            cam_id: currentCamera,
+                            regions: [region],
+                        }),
+                    });
+
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        setStatus(data.message || "Region saved successfully");
+                        points = [];
+
+                        // Wait a moment before reloading to allow server processing
+                        setTimeout(async () => {
+                            // Reload regions from server to ensure we have the latest
+                            await loadExistingRegions();
+
+                            // Reload the reference image after saving
+                            await loadLastProcessedImage(currentCamera);
+
+                            isDrawingEnabled = true;
+                        }, 1000);
+                    } else {
+                        throw new Error(data.message || "Unknown error");
+                    }
+                } catch (error) {
+                    console.error("Error saving region:", error);
+                    setStatus("Error saving region: " + error.message, true);
+                    isDrawingEnabled = true;
+                }
+            } else {
+                setStatus(currentRegionType === 'Zebra'
+                    ? "Please add exactly 2 points for the zebra crossing"
+                    : "Please add at least 3 points to form a polygon", true);
+            }
+
+            updateDebugInfo();
+        });
+
+        // Clear regions button
+        document.getElementById('clear-regions').addEventListener('click', () => {
+            points = [];
+            layer.destroyChildren();
+            layer.draw();
+            setStatus("Drawing cleared. Start adding new points.");
+            updateDebugInfo();
+        });
+
+        // Load regions button
+        document.getElementById('load-regions').addEventListener('click', () => {
+            loadExistingRegions();
+        });
+
+        // Auto-refresh reference image every 15 seconds
+        setInterval(async () => {
+            if (currentCamera && isCanvasReady) {
+                await loadLastProcessedImage(currentCamera);
+            }
+        }, 15000);
+
+        // Initialize with the first camera when page is fully loaded
+        window.addEventListener('load', async () => {
+            setStatus("Initializing admin panel...");
+            await fetchParameters();
+
+            // Force a camera selection to load everything
+            document.getElementById('camera-select').dispatchEvent(new Event('change'));
+        });
+    </script>
+</body>
+</html>
